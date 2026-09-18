@@ -65,9 +65,17 @@ const args = applyMaxOldSpaceSize();
                   brief: 'Enable verbose logging.',
                   default: false,
                 },
+                detail: {
+                  kind: 'enum',
+                  values: ['none', 'rule', 'error', 'both'],
+                  brief:
+                    'Extra context to embed in each inserted @ts-migrating annotation: "rule" appends the TypeScript error code (e.g. @ts-migrating TS7006); "error" appends the error message; "both" appends both; "none" (default) inserts just @ts-migrating.',
+                  default: 'none',
+                },
               },
               aliases: {
                 v: 'verbose',
+                d: 'detail',
               },
               positional: {
                 kind: 'array',

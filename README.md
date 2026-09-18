@@ -58,6 +58,7 @@ The philosophy behind the plugin follows three simple steps:
    * `ts-migrating annotate`
 
      * Automatically mark all errors caused by your new `tsconfig` with `@ts-migrating`.
+     * Pass `--detail` to embed extra context in each directive so reviewers can see *why* a line was annotated (see [🏷️ Annotation detail](#️-annotation-detail)).
      * ⚠️ Run this with a clean git state!!! This script will automatically add the `@ts-migrating` directive above every line with TypeScript error introduced by your new `tsconfig`. Please review the changes carefully. It is recommended to run your formatter and linter afterwards. You may need to run this command again after formatter / linter.️
 
 ## 🎪 Examples
@@ -140,6 +141,26 @@ In your existing `tsconfig.json`, add the plugin:
 
 * Run `npx ts-migrating annotate` to automatically annotate newly introduced errors with `// @ts-migrating`.
 * Replace your CI type-check step with `npx ts-migrating check` to prevent unreviewed errors from slipping through.
+
+## 🏷️ Annotation detail
+
+By default `annotate` inserts a bare `// @ts-migrating` directive. If you'd like each directive to record *why* the line was annotated — handy when reviewing a large migration diff — pass `--detail` (short `-d`):
+
+```bash
+npx ts-migrating annotate --detail none    # // @ts-migrating                (default)
+npx ts-migrating annotate --detail rule    # // @ts-migrating TS7006
+npx ts-migrating annotate --detail error   # // @ts-migrating Parameter 'x' implicitly has an 'any' type.
+npx ts-migrating annotate --detail both    # // @ts-migrating TS7006: Parameter 'x' implicitly has an 'any' type.
+```
+
+| Value            | Inserted directive                                                        | Shows       |
+| ---------------- | ------------------------------------------------------------------------- | ----------- |
+| `none` (default) | `// @ts-migrating`                                                         | nothing extra |
+| `rule`           | `// @ts-migrating TS7006`                                                  | the TypeScript error code |
+| `error`          | `// @ts-migrating Parameter 'x' implicitly has an 'any' type.`            | the error message |
+| `both`           | `// @ts-migrating TS7006: Parameter 'x' implicitly has an 'any' type.`    | the code and the message |
+
+The `@ts-migrating` directive always comes first, so the plugin keeps recognising it and type-checking the line against your original `tsconfig` exactly as before — the extra context is purely informational. The same applies to JSX directives (`{/* @ts-migrating TS7006 */}`).
 
 ## 📊 JSON reporting
 

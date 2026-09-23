@@ -1,5 +1,6 @@
 import * as recast from 'recast';
 import * as babelTsParser from 'recast/parsers/babel-ts';
+import { detectLineTerminator } from './utils/lineTerminator';
 import { maxBy } from './utils/maxBy';
 
 const b = recast.types.builders;
@@ -225,8 +226,13 @@ export const insertSingleLineCommentAtPositions = (
   // Only template-literal comments are attached to the AST. When there are
   // none, the tree is unmodified and recast would print back the original
   // source, so skip the (expensive) print.
-  const lines = (addedLineNumbers.size > 0 ? recast.print(ast).code : code).split('\n');
-    return lines
+  // Keep the file's line endings: recast otherwise prints with the OS default,
+  // turning every line of a CRLF file into LF.
+  const lineTerminator = detectLineTerminator(code);
+  const lines = (
+    addedLineNumbers.size > 0 ? recast.print(ast, { lineTerminator }).code : code
+  ).split('\n');
+  return lines
     .flatMap((line, i) => {
       const lineNumber = i + 1; // +1 because line numbers are 1-index
       if (adjustedAddedLineNumbers.has(lineNumber)) return [line];
@@ -239,11 +245,20 @@ export const insertSingleLineCommentAtPositions = (
         ({ length }) => length,
       );
       const resolvedComment = adjustedLineToComment.get(lineNumber) ?? '';
+      // Splitting on `\n` leaves CRLF lines ending in `\r`; give the inserted
+      // line the same ending as the line it precedes (the last line has none
+      // of its own, so fall back to the file's).
+      const isLastLine = i === lines.length - 1;
+      const carriageReturn = (isLastLine ? lineTerminator === '\r\n' : line.endsWith('\r'))
+        ? '\r'
+        : '';
       return [
-        {
-          'vanilla-naive': `${indent}// ${resolvedComment}`,
-          'jsx-naive': `${indent}{/* ${resolvedComment} */}`,
-        }[commentType],
+        `${
+          {
+            'vanilla-naive': `${indent}// ${resolvedComment}`,
+            'jsx-naive': `${indent}{/* ${resolvedComment} */}`,
+          }[commentType]
+        }${carriageReturn}`,
         line,
       ];
     })
@@ -264,6 +279,32 @@ if (import.meta.vitest) {
 
         const a = 'hello';"
       `);
+    });
+
+    describe('line endings', () => {
+      it('should keep CRLF line endings', () => {
+        const code = 'f();\r\ng();\r\nh();';
+        expect(
+          insertSingleLineCommentAtPositions(code, 'hello', [code.indexOf('g'), code.indexOf('h')]),
+        ).toBe('f();\r\n// hello\r\ng();\r\n// hello\r\nh();');
+      });
+
+      it('should keep CRLF line endings when printing template literals', () => {
+        const code = 'const x = `a ${cool}\r\n${awesome}`;\r\nf();\r\n';
+        expect(
+          insertSingleLineCommentAtPositions(code, 'hello', [
+            code.indexOf('awesome'),
+            code.indexOf('f()'),
+          ]),
+        ).toBe('const x = `a ${cool}\r\n${// hello\r\nawesome}`;\r\n// hello\r\nf();\r\n');
+      });
+
+      it('should keep LF line endings', () => {
+        const code = 'f();\ng();';
+        expect(insertSingleLineCommentAtPositions(code, 'hello', [code.indexOf('g')])).toBe(
+          'f();\n// hello\ng();',
+        );
+      });
     });
 
     it('should only insert one comment if given multiple positions on the same line', () => {

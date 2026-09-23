@@ -4,6 +4,7 @@ import ts from 'typescript/lib/tsserverlibrary';
 import { getSemanticDiagnosticsForFile } from '../../api/getSemanticDiagnostics';
 import { insertSingleLineCommentAtPositions } from '../../api/insertSingleLineCommentsAtPositions';
 import { isPluginDiagnostic } from '../../api/isPluginDiagnostic';
+import { removeCommentsAtPositions } from '../../api/removeCommentsAtPositions';
 import { DIRECTIVE } from '../../plugin/constants/DIRECTIVE';
 import { UNUSED_DIRECTIVE_DIAGNOSTIC_CODE } from '../../plugin/constants/UNUSED_DIRECTIVE_DIAGNOSTIC_CODE';
 import { unbrandDiagnostic } from '../../plugin/utils/diagnostics';
@@ -68,8 +69,88 @@ const annotateDiagnostics = (
   );
 };
 
+const BOM = '\uFEFF';
+
+/**
+ * Removes the stale directives at `removeAt` and adds the `add` directive
+ * comments for new errors (positions in `source`, as reported by TypeScript).
+ */
+const annotateSource = (
+  source: string,
+  {
+    add,
+    removeAt,
+  }: { add: readonly { position: number; comment: string }[]; removeAt: readonly number[] },
+): { code: string; removedCount: number; unremovedPositions: number[] } => {
+  // TypeScript strips a leading BOM when reading files, so its positions are
+  // relative to the code after it.
+  const bom = source.startsWith(BOM) ? BOM : '';
+  const removal = removeCommentsAtPositions(source.slice(bom.length), removeAt);
+  // Removing directives shifts positions, so key the comments by the new ones.
+  const commentByPosition = new Map(
+    add.map(({ position, comment }) => [removal.mapPosition(position), comment]),
+  );
+  const code = insertSingleLineCommentAtPositions(
+    removal.code,
+    position => commentByPosition.get(position) ?? DIRECTIVE,
+    [...commentByPosition.keys()],
+  );
+  return {
+    code: bom + code,
+    removedCount: removal.removedCount,
+    unremovedPositions: removal.unremovedPositions,
+  };
+};
+
 if (import.meta.vitest) {
   const { describe, it, expect } = import.meta.vitest;
+
+  describe('annotateSource', () => {
+    it('removes stale directives and adds new ones in one pass', () => {
+      const source = 'f();\n// @ts-migrating\ng();\nh();\n';
+      expect(
+        annotateSource(source, {
+          add: [{ position: source.indexOf('h'), comment: DIRECTIVE }],
+          removeAt: [source.indexOf('@ts-migrating')],
+        }).code,
+      ).toBe('f();\ng();\n// @ts-migrating\nh();\n');
+    });
+
+    it('keeps CRLF line endings', () => {
+      const source = '// @ts-migrating\r\nf();\r\ng();\r\n';
+      expect(
+        annotateSource(source, {
+          add: [{ position: source.indexOf('g()'), comment: DIRECTIVE }],
+          removeAt: [source.indexOf('@ts-migrating')],
+        }).code,
+      ).toBe('f();\r\n// @ts-migrating\r\ng();\r\n');
+    });
+
+    it('keeps a BOM and treats positions as relative to the code after it', () => {
+      const code = 'f();\n// @ts-migrating\ng();\n';
+      expect(
+        annotateSource(`${BOM}${code}`, {
+          add: [{ position: code.indexOf('f'), comment: DIRECTIVE }],
+          removeAt: [code.indexOf('@ts-migrating')],
+        }).code,
+      ).toBe(`${BOM}// @ts-migrating\nf();\ng();\n`);
+    });
+
+    it('keeps each comment with its error when stale directives shift positions', () => {
+      const source = '// @ts-migrating\nf();\ng();\n';
+      expect(
+        annotateSource(source, {
+          add: [{ position: source.indexOf('g()'), comment: `${DIRECTIVE} TS7006` }],
+          removeAt: [source.indexOf('@ts-migrating')],
+        }).code,
+      ).toBe('f();\n// @ts-migrating TS7006\ng();\n');
+    });
+
+    it('is a no-op without positions', () => {
+      const source = 'f();\r\n// @ts-migrating\r\n';
+      expect(annotateSource(source, { add: [], removeAt: [] }).code).toBe(source);
+    });
+  });
 
   describe('annotateDiagnostics', async () => {
     const ts = await import('typescript/lib/tsserverlibrary');
@@ -648,8 +729,14 @@ else if (b) {
   });
 }
 
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+
 export const annotate = async (
-  { verbose, detail }: { verbose: boolean; detail: AnnotationDetail },
+  {
+    verbose,
+    detail,
+    keepStale,
+  }: { verbose: boolean; detail: AnnotationDetail; keepStale: boolean },
   ...inputPaths: string[]
 ) => {
   const files = getPluginEnabledTSFilePaths(inputPaths, { verbose });
@@ -659,30 +746,59 @@ export const annotate = async (
   console.log('⏳ Gathering errors introduced in your new tsconfig. This may take a while...');
 
   console.time('Type checking');
-  const filePathAndPluginDiagnostics = files.map(filePath => ({
-    filePath,
-    diagnostics: getSemanticDiagnosticsForFile(filePath).filter(
-      d => isPluginDiagnostic(d) && d.code !== UNUSED_DIRECTIVE_DIAGNOSTIC_CODE,
-    ),
-  }));
+  const toPositions = (diagnostics: readonly ts.Diagnostic[]): number[] =>
+    diagnostics.map(({ start }) => start).filter(start => start !== undefined);
+  const filePathAndPositions = files.map(filePath => {
+    const pluginDiagnostics = getSemanticDiagnosticsForFile(filePath).filter(isPluginDiagnostic);
+    const isStaleDirective = (d: ts.Diagnostic) => d.code === UNUSED_DIRECTIVE_DIAGNOSTIC_CODE;
+    return {
+      filePath,
+      add: pluginDiagnostics
+        .filter(d => !isStaleDirective(d))
+        .flatMap(d =>
+          d.start === undefined
+            ? []
+            : [{ position: d.start, comment: buildDirectiveComment(d, detail) }],
+        ),
+      removeAt: keepStale ? [] : toPositions(pluginDiagnostics.filter(isStaleDirective)),
+    };
+  });
   console.timeEnd('Type checking');
 
   console.time('Annotation');
+  let unremovedCount = 0;
   await Promise.all(
-    filePathAndPluginDiagnostics
-      // Leave files without new errors untouched: no parse, no rewrite.
-      .filter(({ diagnostics }) => diagnostics.length > 0)
-      .map(async ({ filePath, diagnostics }) => {
-        await fs.writeFile(
-          filePath,
-          annotateDiagnostics(await fs.readFile(filePath, 'utf8'), diagnostics, detail),
-        );
-        console.log(
-          `✅ Annotated ${filePath} (${diagnostics.length} directive${diagnostics.length === 1 ? '' : 's'} added)`,
-        );
+    filePathAndPositions
+      // Leave files with nothing to change untouched: no parse, no rewrite.
+      .filter(({ add, removeAt }) => add.length > 0 || removeAt.length > 0)
+      .map(async ({ filePath, add, removeAt }) => {
+        const source = await fs.readFile(filePath, 'utf8');
+        const { code, removedCount, unremovedPositions } = annotateSource(source, {
+          add,
+          removeAt,
+        });
+        if (code !== source) await fs.writeFile(filePath, code);
+
+        const changes = [
+          add.length > 0 && `${plural(add.length, 'directive')} added`,
+          removedCount > 0 && `${plural(removedCount, 'stale directive')} removed`,
+        ].filter(Boolean);
+        if (changes.length > 0) console.log(`✅ Annotated ${filePath} (${changes.join(', ')})`);
+
+        unremovedCount += unremovedPositions.length;
+        for (const position of unremovedPositions) {
+          const line = source.slice(0, position).split('\n').length;
+          console.warn(
+            `⚠️ Could not remove the stale directive at ${filePath}:${line}; please remove it by hand.`,
+          );
+        }
       }),
   );
   console.timeEnd('Annotation');
+
+  if (unremovedCount > 0) {
+    console.warn(`⚠️ ${plural(unremovedCount, 'stale directive')} left for manual removal.`);
+  }
 
   console.log(
     '✨ Annotation complete! Remember to run your formatter / linter, and potentially this command again to fully annotate all errors.',

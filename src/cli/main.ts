@@ -80,6 +80,12 @@ const args = applyMaxOldSpaceSize();
                     'Extra context to embed in each inserted @ts-migrating annotation: "rule" appends the TypeScript error code (e.g. @ts-migrating TS7006); "error" appends the error message; "both" appends both; "none" (default) inserts just @ts-migrating.',
                   default: 'none',
                 },
+                keepStale: {
+                  kind: 'boolean',
+                  brief:
+                    'Keep stale @ts-migrating directives (ones whose next line no longer has an error introduced by the new tsconfig). By default they are removed.',
+                  default: false,
+                },
               },
               aliases: {
                 v: 'verbose',
@@ -95,8 +101,9 @@ const args = applyMaxOldSpaceSize();
               },
             },
             docs: {
-              brief: 'Annotate all errors introduced by the new config with @ts-migrating',
-              fullDescription: `Annotate all errors introduced by the new config with @ts-migrating
+              brief:
+                'Annotate all errors introduced by the new config with @ts-migrating, and remove stale directives',
+              fullDescription: `Annotate all errors introduced by the new config with @ts-migrating, and remove @ts-migrating directives that no longer mark such an error (unless --keep-stale is passed).
 
 ${ANNOTATE_WARNING}`,
             },

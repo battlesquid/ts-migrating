@@ -86,14 +86,34 @@ const extractIndent = (code: string): string => {
 
 type NaiveCommentType = 'jsx-naive' | 'vanilla-naive';
 type CommentType = NaiveCommentType | 'vanilla-attach-to-node';
+
+/**
+ * The comment to insert. Either a single string used for every position, or a
+ * function resolving the comment from the position — the latter lets callers
+ * (e.g. `annotate`) embed per-diagnostic context such as the error code or
+ * message.
+ */
+type CommentResolver = string | ((position: number) => string);
+
 export const insertSingleLineCommentAtPositions = (
   code: string,
-  comment: string,
+  comment: CommentResolver,
   positions: number[],
 ): string => {
   const ast = recast.parse(code, { parser: babelTsParser });
 
-  const linesToAdd = new Set(positions.map(position => getLineColumnPosition(code, position).line));
+  const resolveComment = typeof comment === 'function' ? comment : () => comment;
+
+  // Map every affected line to the comment of the first position landing on it.
+  // Multiple positions can collapse onto one line but we only ever insert a
+  // single comment there, so the first one wins.
+  const lineToComment = new Map<number, string>();
+  for (const position of positions) {
+    const line = getLineColumnPosition(code, position).line;
+    if (!lineToComment.has(line)) lineToComment.set(line, resolveComment(position));
+  }
+
+  const linesToAdd = new Set(lineToComment.keys());
 
   const naiveComments = new Map<number, NaiveCommentType>();
   const addedLineNumbers = new Set<number>();
@@ -157,7 +177,7 @@ export const insertSingleLineCommentAtPositions = (
             node.comments = [
               ...(node?.comments ?? []),
               b.commentLine.from({
-                value: ` ${comment}`,
+                value: ` ${lineToComment.get(node.loc.start.line) ?? ''}`,
                 leading: true,
               }),
             ];
@@ -194,6 +214,13 @@ export const insertSingleLineCommentAtPositions = (
     ]),
   );
 
+  const adjustedLineToComment = new Map(
+    [...lineToComment].map(([lineNumber, resolvedComment]) => [
+      adjustLineNumber(lineNumber),
+      resolvedComment,
+    ]),
+  );
+
   const lines = recast.print(ast).code.split('\n');
   return lines
     .flatMap((line, i) => {
@@ -207,10 +234,11 @@ export const insertSingleLineCommentAtPositions = (
         [extractIndent(line), extractIndent(lines[i - 1] ?? '')],
         ({ length }) => length,
       );
+      const resolvedComment = adjustedLineToComment.get(lineNumber) ?? '';
       return [
         {
-          'vanilla-naive': `${indent}// ${comment}`,
-          'jsx-naive': `${indent}{/* ${comment} */}`,
+          'vanilla-naive': `${indent}// ${resolvedComment}`,
+          'jsx-naive': `${indent}{/* ${resolvedComment} */}`,
         }[commentType],
         line,
       ];

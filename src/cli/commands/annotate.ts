@@ -1,18 +1,66 @@
 /** biome-ignore-all lint/suspicious/noTemplateCurlyInString: need to store template curly */
 import fs from 'node:fs/promises';
-import type ts from 'typescript/lib/tsserverlibrary';
+import ts from 'typescript/lib/tsserverlibrary';
 import { getSemanticDiagnosticsForFile } from '../../api/getSemanticDiagnostics';
 import { insertSingleLineCommentAtPositions } from '../../api/insertSingleLineCommentsAtPositions';
 import { isPluginDiagnostic } from '../../api/isPluginDiagnostic';
 import { DIRECTIVE } from '../../plugin/constants/DIRECTIVE';
 import { UNUSED_DIRECTIVE_DIAGNOSTIC_CODE } from '../../plugin/constants/UNUSED_DIRECTIVE_DIAGNOSTIC_CODE';
+import { unbrandDiagnostic } from '../../plugin/utils/diagnostics';
 import { ANNOTATE_WARNING } from '../constants/annotate-warning';
 import { getPluginEnabledTSFilePaths } from '../ops/getPluginEnabledTSFilePaths';
 
-const annotateDiagnostics = (source: string, diagnostics: readonly ts.Diagnostic[]): string => {
+/**
+ * How much context to embed in each inserted `@ts-migrating` directive:
+ * - `none`  → just `@ts-migrating` (default)
+ * - `rule`  → `@ts-migrating TS<code>` (the TypeScript error code)
+ * - `error` → `@ts-migrating <message>` (the error message)
+ * - `both`  → `@ts-migrating TS<code>: <message>`
+ */
+export type AnnotationDetail = 'none' | 'rule' | 'error' | 'both';
+
+/**
+ * Build the single-line comment text for a diagnostic. The `@ts-migrating`
+ * directive always comes first (so the plugin still recognises it via
+ * `^@ts-migrating(\s|$)`); any requested context is appended after a space.
+ */
+const buildDirectiveComment = (diagnostic: ts.Diagnostic, detail: AnnotationDetail): string => {
+  if (detail === 'none') return DIRECTIVE;
+
+  const rule = `TS${diagnostic.code}`;
+  // Strip the `[ts-migrating]` brand the plugin wraps messages in — the
+  // `@ts-migrating` directive already conveys that, so it would only read as a
+  // redundant `@ts-migrating [ts-migrating] ...`.
+  const { messageText } = unbrandDiagnostic(diagnostic);
+  // Flatten message chains and collapse all whitespace (newlines + the
+  // indentation TypeScript adds to nested messages) to single spaces so the
+  // whole directive stays on one line (both `// ...` and `{/* ... */}` forms).
+  const message = ts.flattenDiagnosticMessageText(messageText, ' ').replace(/\s+/g, ' ').trim();
+
+  switch (detail) {
+    case 'rule':
+      return `${DIRECTIVE} ${rule}`;
+    case 'error':
+      return `${DIRECTIVE} ${message}`;
+    case 'both':
+      return `${DIRECTIVE} ${rule}: ${message}`;
+  }
+};
+
+const annotateDiagnostics = (
+  source: string,
+  diagnostics: readonly ts.Diagnostic[],
+  detail: AnnotationDetail = 'none',
+): string => {
+  const commentByPosition = new Map<number, string>();
+  for (const diagnostic of diagnostics) {
+    if (diagnostic.start === undefined) continue;
+    commentByPosition.set(diagnostic.start, buildDirectiveComment(diagnostic, detail));
+  }
+
   return insertSingleLineCommentAtPositions(
     source,
-    DIRECTIVE,
+    position => commentByPosition.get(position) ?? DIRECTIVE,
     diagnostics
       .map(diagnostic => diagnostic.start)
       // filter last because of how typescript works :(
@@ -33,6 +81,102 @@ if (import.meta.vitest) {
       file: undefined,
       length: undefined,
       messageText: '',
+    });
+
+    describe('detail modes', () => {
+      const code = 'const f = (x) => x;';
+      const diagnostic: ts.Diagnostic = {
+        start: code.indexOf('x'),
+        category: ts.DiagnosticCategory.Error,
+        code: 7006,
+        file: undefined,
+        length: 1,
+        messageText: "Parameter 'x' implicitly has an 'any' type.",
+      };
+
+      it('defaults to a bare @ts-migrating directive', () => {
+        expect(annotateDiagnostics(code, [diagnostic])).toMatchInlineSnapshot(`
+          "// @ts-migrating
+          const f = (x) => x;"
+        `);
+      });
+
+      it("'none' inserts a bare @ts-migrating directive", () => {
+        expect(annotateDiagnostics(code, [diagnostic], 'none')).toMatchInlineSnapshot(`
+          "// @ts-migrating
+          const f = (x) => x;"
+        `);
+      });
+
+      it("'rule' appends the TypeScript error code", () => {
+        expect(annotateDiagnostics(code, [diagnostic], 'rule')).toMatchInlineSnapshot(`
+          "// @ts-migrating TS7006
+          const f = (x) => x;"
+        `);
+      });
+
+      it("'error' appends the error message", () => {
+        expect(annotateDiagnostics(code, [diagnostic], 'error')).toMatchInlineSnapshot(`
+          "// @ts-migrating Parameter 'x' implicitly has an 'any' type.
+          const f = (x) => x;"
+        `);
+      });
+
+      it("'both' appends the error code and message", () => {
+        expect(annotateDiagnostics(code, [diagnostic], 'both')).toMatchInlineSnapshot(`
+          "// @ts-migrating TS7006: Parameter 'x' implicitly has an 'any' type.
+          const f = (x) => x;"
+        `);
+      });
+
+      it('flattens message chains and collapses newlines onto one line', () => {
+        const chained: ts.Diagnostic = {
+          ...diagnostic,
+          messageText: {
+            category: ts.DiagnosticCategory.Error,
+            code: 2322,
+            messageText: 'Type A is not assignable to type B.',
+            next: [{ category: ts.DiagnosticCategory.Error, code: 0, messageText: 'Because.' }],
+          },
+        };
+        expect(annotateDiagnostics(code, [chained], 'both')).toMatchInlineSnapshot(`
+          "// @ts-migrating TS7006: Type A is not assignable to type B. Because.
+          const f = (x) => x;"
+        `);
+      });
+
+      it('embeds context in the JSX comment form too', () => {
+        const jsx = 'const a = <div>\n  {hi}\n</div>;';
+        const jsxDiagnostic: ts.Diagnostic = {
+          ...diagnostic,
+          code: 2304,
+          start: jsx.indexOf('hi'),
+          messageText: "Cannot find name 'hi'.",
+        };
+        expect(annotateDiagnostics(jsx, [jsxDiagnostic], 'both')).toMatchInlineSnapshot(`
+          "const a = <div>
+            {/* @ts-migrating TS2304: Cannot find name 'hi'. */}
+            {hi}
+          </div>;"
+        `);
+      });
+
+      it('embeds per-diagnostic context on distinct lines', () => {
+        const multiline = 'const f = (x) => x;\nconst g = (y) => y;';
+        const first: ts.Diagnostic = { ...diagnostic, start: multiline.indexOf('x') };
+        const second: ts.Diagnostic = {
+          ...diagnostic,
+          code: 7006,
+          start: multiline.indexOf('y'),
+          messageText: "Parameter 'y' implicitly has an 'any' type.",
+        };
+        expect(annotateDiagnostics(multiline, [first, second], 'error')).toMatchInlineSnapshot(`
+          "// @ts-migrating Parameter 'x' implicitly has an 'any' type.
+          const f = (x) => x;
+          // @ts-migrating Parameter 'y' implicitly has an 'any' type.
+          const g = (y) => y;"
+        `);
+      });
     });
 
     it('should add @ts-migrating before the first line', () => {
@@ -504,7 +648,10 @@ else if (b) {
   });
 }
 
-export const annotate = async ({ verbose }: { verbose: boolean }, ...inputPaths: string[]) => {
+export const annotate = async (
+  { verbose, detail }: { verbose: boolean; detail: AnnotationDetail },
+  ...inputPaths: string[]
+) => {
   const files = getPluginEnabledTSFilePaths(inputPaths, { verbose });
 
   console.log(ANNOTATE_WARNING);
@@ -525,7 +672,7 @@ export const annotate = async ({ verbose }: { verbose: boolean }, ...inputPaths:
     filePathAndPluginDiagnostics.map(async ({ filePath, diagnostics }) => {
       await fs.writeFile(
         filePath,
-        annotateDiagnostics(await fs.readFile(filePath, 'utf8'), diagnostics),
+        annotateDiagnostics(await fs.readFile(filePath, 'utf8'), diagnostics, detail),
       );
       console.log(
         `✅ Annotated ${filePath} (${diagnostics.length} directive${diagnostics.length === 1 ? '' : 's'} added)`,

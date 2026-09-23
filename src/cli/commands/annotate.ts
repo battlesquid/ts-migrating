@@ -669,15 +669,18 @@ export const annotate = async (
 
   console.time('Annotation');
   await Promise.all(
-    filePathAndPluginDiagnostics.map(async ({ filePath, diagnostics }) => {
-      await fs.writeFile(
-        filePath,
-        annotateDiagnostics(await fs.readFile(filePath, 'utf8'), diagnostics, detail),
-      );
-      console.log(
-        `✅ Annotated ${filePath} (${diagnostics.length} directive${diagnostics.length === 1 ? '' : 's'} added)`,
-      );
-    }),
+    filePathAndPluginDiagnostics
+      // Leave files without new errors untouched: no parse, no rewrite.
+      .filter(({ diagnostics }) => diagnostics.length > 0)
+      .map(async ({ filePath, diagnostics }) => {
+        await fs.writeFile(
+          filePath,
+          annotateDiagnostics(await fs.readFile(filePath, 'utf8'), diagnostics, detail),
+        );
+        console.log(
+          `✅ Annotated ${filePath} (${diagnostics.length} directive${diagnostics.length === 1 ? '' : 's'} added)`,
+        );
+      }),
   );
   console.timeEnd('Annotation');
 

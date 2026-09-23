@@ -36,6 +36,14 @@ const args = applyMaxOldSpaceSize();
                     'Output format. "pretty" (default) prints human-readable diagnostics with colour and context; "json" prints a flat JSON array of every diagnostic (origin + @ts-migrating directive info) for CI gates / dashboards; "ndjson" streams the same records one JSON object per line for large repos.',
                   default: 'pretty',
                 },
+                annotateCommand: {
+                  kind: 'parsed',
+                  parse: String,
+                  optional: true,
+                  placeholder: 'command',
+                  brief:
+                    'Command suggested for marking unmarked errors, e.g. "yarn typecheck:annotate". Defaults to the package manager that ran this CLI (yarn, pnpm, bun or npx), followed by the checked paths.',
+                },
               },
               aliases: {
                 v: 'verbose',
@@ -116,6 +124,8 @@ ${ANNOTATE_WARNING}`,
       }),
       {
         name: packageJSON.name,
+        // Accept `--all-type-errors` as well as `--allTypeErrors`.
+        scanner: { caseStyle: 'allow-kebab-for-camel' },
         versionInfo: {
           currentVersion: packageJSON.version,
         },

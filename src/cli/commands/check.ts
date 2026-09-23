@@ -1,4 +1,5 @@
 import process from 'node:process';
+import { getAnnotateCommand } from '../annotateCommand';
 import { type ReporterName, reporters } from '../reporters/mod';
 
 export const check = (
@@ -6,11 +7,25 @@ export const check = (
     verbose,
     allTypeErrors,
     reporter,
-  }: { verbose: boolean; allTypeErrors: boolean; reporter: ReporterName },
+    annotateCommand,
+  }: {
+    verbose: boolean;
+    allTypeErrors: boolean;
+    reporter: ReporterName;
+    annotateCommand?: string;
+  },
   ...inputPaths: string[]
 ): void => {
   const { unmarkedTsMigratingErrorCount, baselineErrorCount } = reporters[reporter](
-    { verbose, allTypeErrors },
+    {
+      verbose,
+      allTypeErrors,
+      annotateCommand: getAnnotateCommand({
+        override: annotateCommand,
+        userAgent: process.env.npm_config_user_agent,
+        inputPaths,
+      }),
+    },
     ...inputPaths,
   );
 

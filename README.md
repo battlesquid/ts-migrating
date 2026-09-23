@@ -150,6 +150,7 @@ In your existing `tsconfig.json`, add the plugin:
 
 * Run `npx ts-migrating annotate` to automatically annotate newly introduced errors with `// @ts-migrating`.
 * Replace your CI type-check step with `npx ts-migrating check` to prevent unreviewed errors from slipping through.
+* When `check` finds unmarked errors it suggests an `annotate` command for the package manager that ran it (`yarn ts-migrating annotate`, `pnpm exec ts-migrating annotate`, …). Pass `--annotate-command` to suggest your own script instead, e.g. `ts-migrating check --annotate-command "yarn typecheck:annotate"`.
 
 ## 🏷️ Annotation detail
 

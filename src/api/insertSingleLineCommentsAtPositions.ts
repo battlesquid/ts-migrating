@@ -1,6 +1,5 @@
 import * as recast from 'recast';
 import * as babelTsParser from 'recast/parsers/babel-ts';
-import { expect } from 'vitest';
 import { maxBy } from './utils/maxBy';
 
 const b = recast.types.builders;
@@ -44,7 +43,7 @@ const getLineColumnPosition = (
 };
 
 if (import.meta.vitest) {
-  const { it, describe } = import.meta.vitest;
+  const { it, describe, expect } = import.meta.vitest;
 
   describe('getAbsolutePosition / getLineColumnPosition', async () => {
     const ts = await import('typescript/lib/tsserverlibrary');
@@ -100,6 +99,8 @@ export const insertSingleLineCommentAtPositions = (
   comment: CommentResolver,
   positions: number[],
 ): string => {
+  if (positions.length <= 0) return code;
+
   const ast = recast.parse(code, { parser: babelTsParser });
 
   const resolveComment = typeof comment === 'function' ? comment : () => comment;
@@ -221,8 +222,11 @@ export const insertSingleLineCommentAtPositions = (
     ]),
   );
 
-  const lines = recast.print(ast).code.split('\n');
-  return lines
+  // Only template-literal comments are attached to the AST. When there are
+  // none, the tree is unmodified and recast would print back the original
+  // source, so skip the (expensive) print.
+  const lines = (addedLineNumbers.size > 0 ? recast.print(ast).code : code).split('\n');
+    return lines
     .flatMap((line, i) => {
       const lineNumber = i + 1; // +1 because line numbers are 1-index
       if (adjustedAddedLineNumbers.has(lineNumber)) return [line];
@@ -247,7 +251,7 @@ export const insertSingleLineCommentAtPositions = (
 };
 
 if (import.meta.vitest) {
-  const { it, describe } = import.meta.vitest;
+  const { it, describe, expect } = import.meta.vitest;
 
   describe('insertSingleLineCommentsAtPositions', () => {
     it('should insert comment at given position', () => {

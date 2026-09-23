@@ -2,6 +2,7 @@ import path from 'node:path';
 import ts from 'typescript/lib/tsserverlibrary';
 import type { TsMigratingLanguageService } from '../../plugin/createTsMigratingProxyLanguageService';
 import { isPluginEnabled } from '../getTSInfoForFile';
+import { findLoadedDefaultProjectForFile } from './findLoadedDefaultProjectForFile';
 import { projectService } from './projectService';
 
 /**
@@ -16,6 +17,20 @@ export const withLanguageServiceForFile = <T>(
   use: (languageService: TsMigratingLanguageService, normalizedFile: string) => T,
 ): T | undefined => {
   const file = ts.server.toNormalizedPath(path.resolve(process.cwd(), targetFile));
+
+  const useProject = (project: ts.server.Project): T | undefined => {
+    if (!isPluginEnabled(project.getCompilerOptions())) {
+      // tsconfig that this file uses does not have `ts-migrating` declared in the plugin.
+      return undefined;
+    }
+
+    return use(project.getLanguageService() as TsMigratingLanguageService, file);
+  };
+
+  // Skip `openClientFile` (quadratic across a large repo) when the file's
+  // project is already loaded.
+  const loadedProject = findLoadedDefaultProjectForFile(file);
+  if (loadedProject) return useProject(loadedProject);
 
   const projects = [...projectService.configuredProjects.values()];
   if (projects.every(project => !project.containsFile(file))) {
@@ -35,12 +50,7 @@ export const withLanguageServiceForFile = <T>(
       throw new Error('Expect project to exist');
     }
 
-    if (!isPluginEnabled(project.getCompilerOptions())) {
-      // tsconfig that this file uses does not have `ts-migrating` declared in the plugin.
-      return undefined;
-    }
-
-    return use(project.getLanguageService() as TsMigratingLanguageService, file);
+    return useProject(project);
   } finally {
     projectService.closeClientFile(file);
   }

@@ -8,7 +8,7 @@ import { type ReportItem, toReportItem } from './helpers/toReportItem';
  * streams instead of holding everything in memory.
  */
 export const jsonReporter = (
-  { verbose }: { verbose: boolean; allTypeErrors: boolean },
+  { verbose }: { verbose: boolean; allTypeErrors: boolean; annotateCommand: string },
   ...inputPaths: string[]
 ): ReportTally => {
   const cwd = process.cwd();

@@ -7,3 +7,4 @@ export {
 } from './getTsMigratingReportForFile';
 export { insertSingleLineCommentAtPositions } from './insertSingleLineCommentsAtPositions';
 export { isPluginDiagnostic } from './isPluginDiagnostic';
+export { removeCommentsAtPositions } from './removeCommentsAtPositions';

@@ -36,6 +36,14 @@ const args = applyMaxOldSpaceSize();
                     'Output format. "pretty" (default) prints human-readable diagnostics with colour and context; "json" prints a flat JSON array of every diagnostic (origin + @ts-migrating directive info) for CI gates / dashboards; "ndjson" streams the same records one JSON object per line for large repos.',
                   default: 'pretty',
                 },
+                annotateCommand: {
+                  kind: 'parsed',
+                  parse: String,
+                  optional: true,
+                  placeholder: 'command',
+                  brief:
+                    'Command suggested for marking unmarked errors, e.g. "yarn typecheck:annotate". Defaults to the package manager that ran this CLI (yarn, pnpm, bun or npx), followed by the checked paths.',
+                },
               },
               aliases: {
                 v: 'verbose',
@@ -72,6 +80,12 @@ const args = applyMaxOldSpaceSize();
                     'Extra context to embed in each inserted @ts-migrating annotation: "rule" appends the TypeScript error code (e.g. @ts-migrating TS7006); "error" appends the error message; "both" appends both; "none" (default) inserts just @ts-migrating.',
                   default: 'none',
                 },
+                keepStale: {
+                  kind: 'boolean',
+                  brief:
+                    'Keep stale @ts-migrating directives (ones whose next line no longer has an error introduced by the new tsconfig). By default they are removed.',
+                  default: false,
+                },
               },
               aliases: {
                 v: 'verbose',
@@ -87,8 +101,9 @@ const args = applyMaxOldSpaceSize();
               },
             },
             docs: {
-              brief: 'Annotate all errors introduced by the new config with @ts-migrating',
-              fullDescription: `Annotate all errors introduced by the new config with @ts-migrating
+              brief:
+                'Annotate all errors introduced by the new config with @ts-migrating, and remove stale directives',
+              fullDescription: `Annotate all errors introduced by the new config with @ts-migrating, and remove @ts-migrating directives that no longer mark such an error (unless --keep-stale is passed).
 
 ${ANNOTATE_WARNING}`,
             },
@@ -116,6 +131,8 @@ ${ANNOTATE_WARNING}`,
       }),
       {
         name: packageJSON.name,
+        // Accept `--all-type-errors` as well as `--allTypeErrors`.
+        scanner: { caseStyle: 'allow-kebab-for-camel' },
         versionInfo: {
           currentVersion: packageJSON.version,
         },

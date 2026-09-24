@@ -19,7 +19,11 @@ const FORMAT_HOST: ts.FormatDiagnosticsHost = {
  * diagnostics so they read as `[ts-migrating]`.
  */
 export const prettyReporter = (
-  { verbose, allTypeErrors }: { verbose: boolean; allTypeErrors: boolean },
+  {
+    verbose,
+    allTypeErrors,
+    annotateCommand,
+  }: { verbose: boolean; allTypeErrors: boolean; annotateCommand: string },
   ...inputPaths: string[]
 ): ReportTally => {
   console.log(
@@ -55,7 +59,7 @@ export const prettyReporter = (
 
   if (unmarkedTsMigratingErrorCount > 0) {
     console.error(
-      `❌ ${unmarkedTsMigratingErrorCount} unmarked plugin error${unmarkedTsMigratingErrorCount === 1 ? '' : 's'} found. Run \`npx ts-migrating annotate\` to automatically mark them!`,
+      `❌ ${unmarkedTsMigratingErrorCount} unmarked plugin error${unmarkedTsMigratingErrorCount === 1 ? '' : 's'} found. Run \`${annotateCommand}\` to automatically mark them!`,
     );
   } else {
     console.log('✅ No unmarked plugin errors found.');

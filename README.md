@@ -148,8 +148,9 @@ In your existing `tsconfig.json`, add the plugin:
 
 ### ✨ Optional Next Steps
 
-* Run `npx ts-migrating annotate` to automatically annotate newly introduced errors with `// @ts-migrating`.
+* Run `npx ts-migrating annotate` to automatically annotate newly introduced errors with `// @ts-migrating`. It also removes stale directives (ones whose next line no longer has such an error, e.g. because the code was fixed); pass `--keep-stale` to keep them. Annotated files keep their line endings (LF or CRLF).
 * Replace your CI type-check step with `npx ts-migrating check` to prevent unreviewed errors from slipping through.
+* When `check` finds unmarked errors it suggests an `annotate` command for the package manager that ran it (`yarn ts-migrating annotate`, `pnpm exec ts-migrating annotate`, …). Pass `--annotate-command` to suggest your own script instead, e.g. `ts-migrating check --annotate-command "yarn typecheck:annotate"`.
 
 ## 🏷️ Annotation detail
 
@@ -223,7 +224,7 @@ npx ts-migrating check --reporter ndjson \
 
 > ℹ️ The command still exits non-zero when there are *unmarked* `ts-migrating` errors (and, with `--all-type-errors`, when there are pre-existing `baseline` errors), so it can both gate CI and produce the report. The JSON is printed regardless of the exit code.
 
-> ℹ️ Stale (unused) `@ts-migrating` directives are reported too — as unmarked `ts-migrating` entries with code `555` — so the JSON gate fails on them exactly like the default `check`. Filter them out with `select(.code != 555)` if you only want real type errors.
+> ℹ️ Stale (unused) `@ts-migrating` directives are reported too — as unmarked `ts-migrating` entries with code `555` — so the JSON gate fails on them exactly like the default `check`. Filter them out with `select(.code != 555)` if you only want real type errors, or run `annotate` to remove them.
 
 ## API
 

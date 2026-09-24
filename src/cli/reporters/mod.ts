@@ -4,7 +4,7 @@ import { ndjsonReporter } from './ndjson';
 import { prettyReporter } from './pretty';
 
 type ReporterFn = (
-  options: { verbose: boolean; allTypeErrors: boolean },
+  options: { verbose: boolean; allTypeErrors: boolean; annotateCommand: string },
   ...inputPaths: string[]
 ) => ReportTally;
 

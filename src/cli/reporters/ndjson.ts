@@ -8,7 +8,7 @@ import { toReportItem } from './helpers/toReportItem';
  * for large repos and shell pipelines (`jq -c`, `grep`, `wc -l`).
  */
 export const ndjsonReporter = (
-  { verbose }: { verbose: boolean; allTypeErrors: boolean },
+  { verbose }: { verbose: boolean; allTypeErrors: boolean; annotateCommand: string },
   ...inputPaths: string[]
 ): ReportTally => {
   const cwd = process.cwd();
